@@ -11,7 +11,10 @@ import PeerWallet from 'trac-wallet';
 import DHT from 'hyperdht';
 
 import { ScBridgeClient } from '../src/sc-bridge/client.js';
+import { createUnsignedEnvelope, attachSignature } from '../src/protocol/signedMessage.js';
 import { createSignedWelcome, signPayloadHex, toB64Json } from '../src/sidechannel/capabilities.js';
+import { KIND, PAIR, ASSET } from '../src/swap/constants.js';
+import { hashUnsignedEnvelope } from '../src/swap/hash.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -130,6 +133,68 @@ function parseJsonLines(text) {
     } catch (_e) {}
   }
   return events;
+}
+
+function ensureOk(res, label) {
+  assert.ok(res && typeof res === 'object', `${label} failed (no response)`);
+  if (res.type === 'error') throw new Error(`${label} failed: ${res.error}`);
+  return res;
+}
+
+function stripSignature(envelope) {
+  if (!envelope || typeof envelope !== 'object') return envelope;
+  const { sig: _sig, signer: _signer, ...unsigned } = envelope;
+  return unsigned;
+}
+
+function waitForSidechannel(sc, { channel, pred, timeoutMs = 10_000, label = 'waitForSidechannel' }) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error(`${label} timeout after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    const onMsg = (evt) => {
+      try {
+        if (!evt || evt.type !== 'sidechannel_message') return;
+        if (channel && evt.channel !== channel) return;
+        if (!pred || pred(evt.message, evt)) {
+          cleanup();
+          resolve(evt);
+        }
+      } catch (err) {
+        cleanup();
+        reject(err);
+      }
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      sc.off('sidechannel_message', onMsg);
+    };
+
+    sc.on('sidechannel_message', onMsg);
+  });
+}
+
+async function expectNoSidechannel(sc, { channel, pred, durationMs = 1200, label = 'expectNoSidechannel' } = {}) {
+  let seen = null;
+  const onMsg = (evt) => {
+    try {
+      if (!evt || evt.type !== 'sidechannel_message') return;
+      if (channel && evt.channel !== channel) return;
+      if (!pred || pred(evt.message, evt)) {
+        seen = evt;
+      }
+    } catch (_e) {}
+  };
+  sc.on('sidechannel_message', onMsg);
+  try {
+    await new Promise((r) => setTimeout(r, durationMs));
+  } finally {
+    sc.off('sidechannel_message', onMsg);
+  }
+  if (seen) throw new Error(`${label}: unexpectedly saw message kind=${seen?.message?.kind || 'unknown'}`);
 }
 
 test('e2e: RFQ maker/taker bots negotiate and join swap channel (sidechannel invites)', async (t) => {
@@ -342,4 +407,326 @@ test('e2e: RFQ maker/taker bots negotiate and join swap channel (sidechannel inv
     }
   }, { label: 'taker left swap channel', tries: 80, delayMs: 250 });
   takerSc2.close();
+});
+
+test('e2e: maker rejects quote_accept from non-RFQ signer (prevents quote hijack)', async (t) => {
+  const runId = crypto.randomBytes(4).toString('hex');
+  const rfqChannel = `btc-usdt-sol-rfq-hijack-${runId}`;
+
+  // Local DHT bootstrapper for reliability (avoid public bootstrap nodes).
+  const dhtPort = 30000 + crypto.randomInt(0, 10000);
+  const dht = DHT.bootstrapper(dhtPort, '127.0.0.1');
+  await dht.ready();
+  const dhtBootstrap = `127.0.0.1:${dhtPort}`;
+  t.after(async () => {
+    try {
+      await dht.destroy({ force: true });
+    } catch (_e) {}
+  });
+
+  const storesDir = path.join(repoRoot, 'stores');
+  const makerStore = `e2e-rfq-maker-hijack-${runId}`;
+  const takerStore = `e2e-rfq-taker-hijack-${runId}`;
+  const attackerStore = `e2e-rfq-attacker-hijack-${runId}`;
+
+  const makerKeys = await writePeerKeypair({ storesDir, storeName: makerStore });
+  const takerKeys = await writePeerKeypair({ storesDir, storeName: takerStore });
+  await writePeerKeypair({ storesDir, storeName: attackerStore });
+
+  const signMakerHex = (payload) => signPayloadHex(payload, makerKeys.secHex);
+  const rfqWelcome = createSignedWelcome(
+    { channel: rfqChannel, ownerPubKey: makerKeys.pubHex, text: `rfq ${runId}` },
+    signMakerHex
+  );
+  const rfqWelcomeB64 = toB64Json(rfqWelcome);
+
+  const makerToken = `token-maker-hijack-${runId}`;
+  const takerToken = `token-taker-hijack-${runId}`;
+  const attackerToken = `token-attacker-hijack-${runId}`;
+  const portBase = 47000 + crypto.randomInt(0, 1000);
+  const makerPort = portBase;
+  const takerPort = portBase + 1;
+  const attackerPort = portBase + 2;
+
+  const makerPeer = spawnPeer(
+    [
+      '--peer-store-name',
+      makerStore,
+      '--msb',
+      '0',
+      '--price-oracle',
+      '1',
+      '--price-providers',
+      'static',
+      '--price-static-btc-usdt',
+      '200000',
+      '--price-static-usdt-usd',
+      '1',
+      '--price-static-count',
+      '5',
+      '--price-poll-ms',
+      '200',
+      '--dht-bootstrap',
+      dhtBootstrap,
+      '--sc-bridge',
+      '1',
+      '--sc-bridge-token',
+      makerToken,
+      '--sc-bridge-port',
+      String(makerPort),
+      '--sidechannels',
+      rfqChannel,
+      '--sidechannel-pow',
+      '0',
+      '--sidechannel-invite-required',
+      '1',
+      '--sidechannel-invite-prefixes',
+      'swap:',
+      '--sidechannel-inviter-keys',
+      makerKeys.pubHex,
+      '--sidechannel-owner',
+      `${rfqChannel}:${makerKeys.pubHex}`,
+      '--sidechannel-default-owner',
+      makerKeys.pubHex,
+      '--sidechannel-welcome',
+      `${rfqChannel}:b64:${rfqWelcomeB64}`,
+    ],
+    { label: 'maker-hijack' }
+  );
+
+  const takerPeer = spawnPeer(
+    [
+      '--peer-store-name',
+      takerStore,
+      '--msb',
+      '0',
+      '--price-oracle',
+      '1',
+      '--price-providers',
+      'static',
+      '--price-static-btc-usdt',
+      '200000',
+      '--price-static-usdt-usd',
+      '1',
+      '--price-static-count',
+      '5',
+      '--price-poll-ms',
+      '200',
+      '--dht-bootstrap',
+      dhtBootstrap,
+      '--sc-bridge',
+      '1',
+      '--sc-bridge-token',
+      takerToken,
+      '--sc-bridge-port',
+      String(takerPort),
+      '--sidechannels',
+      rfqChannel,
+      '--sidechannel-pow',
+      '0',
+      '--sidechannel-invite-required',
+      '1',
+      '--sidechannel-invite-prefixes',
+      'swap:',
+      '--sidechannel-inviter-keys',
+      makerKeys.pubHex,
+      '--sidechannel-owner',
+      `${rfqChannel}:${makerKeys.pubHex}`,
+      '--sidechannel-default-owner',
+      makerKeys.pubHex,
+      '--sidechannel-welcome',
+      `${rfqChannel}:b64:${rfqWelcomeB64}`,
+    ],
+    { label: 'taker-hijack' }
+  );
+
+  const attackerPeer = spawnPeer(
+    [
+      '--peer-store-name',
+      attackerStore,
+      '--msb',
+      '0',
+      '--price-oracle',
+      '1',
+      '--price-providers',
+      'static',
+      '--price-static-btc-usdt',
+      '200000',
+      '--price-static-usdt-usd',
+      '1',
+      '--price-static-count',
+      '5',
+      '--price-poll-ms',
+      '200',
+      '--dht-bootstrap',
+      dhtBootstrap,
+      '--sc-bridge',
+      '1',
+      '--sc-bridge-token',
+      attackerToken,
+      '--sc-bridge-port',
+      String(attackerPort),
+      '--sidechannels',
+      rfqChannel,
+      '--sidechannel-pow',
+      '0',
+      '--sidechannel-invite-required',
+      '1',
+      '--sidechannel-invite-prefixes',
+      'swap:',
+      '--sidechannel-inviter-keys',
+      makerKeys.pubHex,
+      '--sidechannel-owner',
+      `${rfqChannel}:${makerKeys.pubHex}`,
+      '--sidechannel-default-owner',
+      makerKeys.pubHex,
+      '--sidechannel-welcome',
+      `${rfqChannel}:b64:${rfqWelcomeB64}`,
+    ],
+    { label: 'attacker-hijack' }
+  );
+
+  t.after(async () => {
+    await killProc(attackerPeer.proc);
+    await killProc(takerPeer.proc);
+    await killProc(makerPeer.proc);
+  });
+
+  // Wait until all SC-Bridge servers are reachable.
+  const makerSc = new ScBridgeClient({ url: `ws://127.0.0.1:${makerPort}`, token: makerToken });
+  const takerSc = new ScBridgeClient({ url: `ws://127.0.0.1:${takerPort}`, token: takerToken });
+  const attackerSc = new ScBridgeClient({ url: `ws://127.0.0.1:${attackerPort}`, token: attackerToken });
+  await connectBridge(makerSc, 'maker sc-bridge (hijack)');
+  await connectBridge(takerSc, 'taker sc-bridge (hijack)');
+  await connectBridge(attackerSc, 'attacker sc-bridge (hijack)');
+  t.after(async () => {
+    makerSc.close();
+    takerSc.close();
+    attackerSc.close();
+  });
+
+  // Ensure sidechannels have passed the DHT bootstrap barrier and joined topics.
+  await retry(async () => {
+    const s = await makerSc.stats();
+    if (s.type !== 'stats' || s.sidechannelStarted !== true) throw new Error('maker sidechannel not started');
+  }, { label: 'maker sidechannel started (hijack)', tries: 200, delayMs: 250 });
+  await retry(async () => {
+    const s = await takerSc.stats();
+    if (s.type !== 'stats' || s.sidechannelStarted !== true) throw new Error('taker sidechannel not started');
+  }, { label: 'taker sidechannel started (hijack)', tries: 200, delayMs: 250 });
+  await retry(async () => {
+    const s = await attackerSc.stats();
+    if (s.type !== 'stats' || s.sidechannelStarted !== true) throw new Error('attacker sidechannel not started');
+  }, { label: 'attacker sidechannel started (hijack)', tries: 200, delayMs: 250 });
+
+  ensureOk(await takerSc.join(rfqChannel), `join ${rfqChannel} (taker)`);
+  ensureOk(await attackerSc.join(rfqChannel), `join ${rfqChannel} (attacker)`);
+  ensureOk(await takerSc.subscribe([rfqChannel]), `subscribe ${rfqChannel} (taker)`);
+
+  const makerBot = spawnBot(
+    [
+      'scripts/rfq-maker.mjs',
+      '--url',
+      `ws://127.0.0.1:${makerPort}`,
+      '--token',
+      makerToken,
+      '--rfq-channel',
+      rfqChannel,
+      '--price-guard',
+      '0',
+      '--once',
+      '1',
+    ],
+    { label: 'maker-bot-hijack' }
+  );
+
+  const tradeId = `swap_${crypto.randomUUID()}`;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const rfqUnsigned = createUnsignedEnvelope({
+    v: 1,
+    kind: KIND.RFQ,
+    tradeId,
+    body: {
+      rfq_channel: rfqChannel,
+      pair: PAIR.BTC_LN__USDT_SOL,
+      direction: `${ASSET.BTC_LN}->${ASSET.USDT_SOL}`,
+      btc_sats: 10000,
+      usdt_amount: '1234567',
+      valid_until_unix: nowSec + 60,
+    },
+  });
+  const sig = await takerSc.sign(rfqUnsigned);
+  assert.equal(sig.type, 'signed');
+  const rfqSigned = attachSignature(rfqUnsigned, { signerPubKeyHex: sig.signer, sigHex: sig.sig });
+
+  // Maker bot might not be subscribed yet; resend RFQ until we see a quote.
+  let rfqStop = false;
+  const rfqResender = setInterval(async () => {
+    if (rfqStop) return;
+    try {
+      await takerSc.send(rfqChannel, rfqSigned);
+    } catch (_e) {}
+  }, 250);
+  t.after(() => clearInterval(rfqResender));
+
+  // Wait for maker quote, then attempt hijack accept from attacker.
+  const quoteEvt = await waitForSidechannel(takerSc, {
+    channel: rfqChannel,
+    pred: (m) => m?.kind === KIND.QUOTE && String(m.trade_id) === tradeId,
+    timeoutMs: 10_000,
+    label: 'wait quote',
+  });
+  rfqStop = true;
+  clearInterval(rfqResender);
+  const quote = quoteEvt.message;
+  const quoteId = hashUnsignedEnvelope(stripSignature(quote));
+  const rfqId = String(quote.body?.rfq_id || '').trim().toLowerCase();
+
+  const attackerAcceptUnsigned = createUnsignedEnvelope({
+    v: 1,
+    kind: KIND.QUOTE_ACCEPT,
+    tradeId,
+    body: { rfq_id: rfqId, quote_id: quoteId },
+  });
+  {
+    const sig = await attackerSc.sign(attackerAcceptUnsigned);
+    assert.equal(sig.type, 'signed');
+    const qa = attachSignature(attackerAcceptUnsigned, { signerPubKeyHex: sig.signer, sigHex: sig.sig });
+    ensureOk(await attackerSc.send(rfqChannel, qa), 'send attacker quote_accept');
+  }
+
+  // Maker must ignore the hijack accept (no swap invite should be broadcast).
+  await expectNoSidechannel(takerSc, {
+    channel: rfqChannel,
+    durationMs: 1500,
+    pred: (m) => m?.kind === KIND.SWAP_INVITE && String(m.trade_id) === tradeId && String(m.body?.quote_id || '').trim().toLowerCase() === quoteId,
+    label: 'no swap invite for attacker accept',
+  });
+
+  // Legit accept from the RFQ signer should succeed.
+  const takerAcceptUnsigned = createUnsignedEnvelope({
+    v: 1,
+    kind: KIND.QUOTE_ACCEPT,
+    tradeId,
+    body: { rfq_id: rfqId, quote_id: quoteId },
+  });
+  {
+    const sig = await takerSc.sign(takerAcceptUnsigned);
+    assert.equal(sig.type, 'signed');
+    const qa = attachSignature(takerAcceptUnsigned, { signerPubKeyHex: sig.signer, sigHex: sig.sig });
+    ensureOk(await takerSc.send(rfqChannel, qa), 'send taker quote_accept');
+  }
+
+  const inviteEvt = await waitForSidechannel(takerSc, {
+    channel: rfqChannel,
+    pred: (m) => m?.kind === KIND.SWAP_INVITE && String(m.trade_id) === tradeId,
+    timeoutMs: 10_000,
+    label: 'wait swap invite',
+  });
+  const invite = inviteEvt.message?.body?.invite;
+  assert.ok(invite && invite.payload, 'swap invite should include invite payload');
+  assert.equal(String(invite.payload.inviteePubKey || '').toLowerCase(), takerKeys.pubHex.toLowerCase());
+
+  // Once-mode maker bot should exit successfully.
+  await makerBot.wait();
 });

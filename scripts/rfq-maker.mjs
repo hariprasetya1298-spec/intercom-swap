@@ -741,6 +741,7 @@ async function main() {
         if (debug) process.stderr.write(`[maker] quoted trade_id=${msg.trade_id} rfq_id=${rfqId} quote_id=${quoteId} sent=${sent.type}\n`);
         quotes.set(quoteId, {
           rfq_id: rfqId,
+          rfq_signer: String(msg.signer || '').trim().toLowerCase(),
           trade_id: String(msg.trade_id),
           btc_sats: msg.body.btc_sats,
           usdt_amount: quoteUsdtAmount,
@@ -760,9 +761,13 @@ async function main() {
         if (known.rfq_id !== rfqId) return;
 
         const tradeId = String(msg.trade_id);
+        if (String(known.trade_id) !== tradeId) return;
         const swapChannel = swapChannelTemplate.replaceAll('{trade_id}', tradeId);
+        if (swaps.has(swapChannel)) return;
         const inviteePubKey = String(msg.signer || '').trim().toLowerCase();
         if (!inviteePubKey) return;
+        // Prevent quote hijacking: only the original RFQ signer is allowed to accept its quote.
+        if (known.rfq_signer && inviteePubKey !== String(known.rfq_signer).trim().toLowerCase()) return;
 
         // Build welcome + invite signed by this peer (SC-Bridge signing).
         const welcomePayload = normalizeWelcomePayload({
