@@ -99,6 +99,15 @@ This repo also includes `scripts/solprogctl.mjs` (with wrappers `scripts/solprog
 - deploy the Solana program (`deploy`)
 - inspect program ids / program keypairs (`id`, `keypair-pubkey`)
 
+This repo also includes `scripts/lndctl.mjs` (with wrappers `scripts/lndctl.sh` and `scripts/lndctl.ps1`) to deterministically:
+- initialize an LND node directory + `lnd.conf` under `onchain/` (`init`)
+- start/stop LND (`start`, `stop`)
+- create/unlock the LND wallet (interactive; required once per node) (`create-wallet`, `unlock`)
+- print expected TLS/macaroon paths for tooling (`paths`)
+
+Optional secret helper scripts (store outputs under `onchain/`, never commit):
+- `scripts/lndpw.sh` / `scripts/lndpw.ps1`: write an LND auto-unlock password file (used by `wallet-unlock-password-file` in `lnd.conf`).
+
 This repo also includes wallet/inventory operator tools (no custodial wallet APIs; keys stay local):
 - `scripts/lnctl.mjs` (with wrappers `scripts/lnctl.sh` and `scripts/lnctl.ps1`) for Lightning node ops (CLN or LND):
   - on-chain funding address (`newaddr`) + balance (`balance`)
@@ -990,21 +999,38 @@ Lightning (local node only; no wallet-service APIs):
 # Example: query a running CLN node (CLI backend).
 scripts/lnctl.sh info --impl cln --backend cli --network bitcoin
 
-# Example: query a running LND node (CLI backend).
-# Store tls cert + macaroon under onchain/ (gitignored).
-scripts/lnctl.sh info --impl lnd --backend cli --network mainnet \
-  --lnd-rpcserver 127.0.0.1:10009 \
-  --lnd-tlscert onchain/lnd/mainnet/tls.cert \
-  --lnd-macaroon onchain/lnd/mainnet/admin.macaroon
+# Example: setup LND Neutrino nodes (recommended for mainnet; no full node required).
+# Start on signet first, then switch --network mainnet once everything is proven.
+#
+# Maker node
+scripts/lndpw.sh onchain/lnd/signet/maker/wallet.pw
+scripts/lndctl.sh init --node maker --network signet --bitcoin-node neutrino --neutrino-peers "<peer1:8333,peer2:8333>" \
+  --p2p-port 9735 --rpc-port 10009 --rest-port 8080 \
+  --wallet-password-file onchain/lnd/signet/maker/wallet.pw
+scripts/lndctl.sh start --node maker --network signet
+# One-time wallet creation (interactive):
+scripts/lndctl.sh create-wallet --node maker --network signet
+
+# Taker node (use different ports if on same machine)
+scripts/lndpw.sh onchain/lnd/signet/taker/wallet.pw
+scripts/lndctl.sh init --node taker --network signet --bitcoin-node neutrino --neutrino-peers "<peer1:8333,peer2:8333>" \
+  --p2p-port 9736 --rpc-port 10010 --rest-port 8081 \
+  --wallet-password-file onchain/lnd/signet/taker/wallet.pw
+scripts/lndctl.sh start --node taker --network signet
+scripts/lndctl.sh create-wallet --node taker --network signet
+
+# Query a running LND node (CLI backend).
+scripts/lnctl.sh info --impl lnd --backend cli --network signet \
+  --lnd-dir onchain/lnd/signet/maker \
+  --lnd-rpcserver 127.0.0.1:10009
 
 # Funding address for your CLN node's on-chain wallet (used to get liquidity into LN):
 scripts/lnctl.sh newaddr --impl cln --backend cli --network bitcoin
 
 # Funding address for your LND node's on-chain wallet:
-scripts/lnctl.sh newaddr --impl lnd --backend cli --network mainnet \
-  --lnd-rpcserver 127.0.0.1:10009 \
-  --lnd-tlscert onchain/lnd/mainnet/tls.cert \
-  --lnd-macaroon onchain/lnd/mainnet/admin.macaroon
+scripts/lnctl.sh newaddr --impl lnd --backend cli --network signet \
+  --lnd-dir onchain/lnd/signet/maker \
+  --lnd-rpcserver 127.0.0.1:10009
 ```
 
 Intercom + bots (symmetrical, both sides can quote/RFQ/invite):
@@ -1042,14 +1068,14 @@ scripts/swapctl-peer.sh swap-maker 49222 svc-announce-loop \
 scripts/otc-maker-peer.sh swap-maker 49222 \
   --run-swap 1 \
   --ln-impl lnd --ln-backend cli --ln-network mainnet \
-  --lnd-rpcserver 127.0.0.1:10009 --lnd-tlscert onchain/lnd/mainnet/tls.cert --lnd-macaroon onchain/lnd/mainnet/admin.macaroon \
+  --lnd-dir onchain/lnd/mainnet/maker --lnd-rpcserver 127.0.0.1:10009 \
   --solana-rpc-url <rpc> --solana-keypair onchain/solana/keypairs/swap-maker-sol.json --solana-mint <USDT_MINT> \
   --solana-trade-fee-collector <TRADE_FEE_COLLECTOR_PUBKEY>
 
 scripts/otc-taker-peer.sh swap-taker 49223 \
   --run-swap 1 \
   --ln-impl lnd --ln-backend cli --ln-network mainnet \
-  --lnd-rpcserver 127.0.0.1:10009 --lnd-tlscert onchain/lnd/mainnet/tls.cert --lnd-macaroon onchain/lnd/mainnet/admin.macaroon \
+  --lnd-dir onchain/lnd/mainnet/taker --lnd-rpcserver 127.0.0.1:10010 \
   --solana-rpc-url <rpc> --solana-keypair onchain/solana/keypairs/swap-taker-sol.json --solana-mint <USDT_MINT>
 ```
 
