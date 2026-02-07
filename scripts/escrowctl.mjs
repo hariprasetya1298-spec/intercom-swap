@@ -40,6 +40,8 @@ Global flags:
   --solana-rpc-url <url[,url2,...]>   (default: http://127.0.0.1:8899)
   --commitment <processed|confirmed|finalized> (default: confirmed)
   --program-id <base58>               (default: LN_USDT_ESCROW_PROGRAM_ID)
+  --solana-cu-limit <units>           (optional; adds ComputeBudget cu limit)
+  --solana-cu-price <microLamports>   (optional; adds ComputeBudget priority fee)
 
 Key flags (for signing commands):
   --solana-keypair <path>             (required for config-init/config-set/fees-withdraw)
@@ -135,6 +137,8 @@ async function main() {
   const commitment = (flags.get('commitment') && String(flags.get('commitment')).trim()) || 'confirmed';
   const programIdStr = (flags.get('program-id') && String(flags.get('program-id')).trim()) || '';
   const programId = programIdStr ? new PublicKey(programIdStr) : LN_USDT_ESCROW_PROGRAM_ID;
+  const computeUnitLimit = parseIntFlag(flags.get('solana-cu-limit'), 'solana-cu-limit', null);
+  const computeUnitPriceMicroLamports = parseIntFlag(flags.get('solana-cu-price'), 'solana-cu-price', null);
   const pool = new SolanaRpcPool({ rpcUrls: rpcUrl, commitment });
 
   if (cmd === 'config-get') {
@@ -308,6 +312,8 @@ async function main() {
           ...(cmd === 'config-init' ? { payer: signer } : { authority: signer }),
           feeCollector,
           feeBps,
+          computeUnitLimit,
+          computeUnitPriceMicroLamports,
           programId,
         }),
       { label: cmd }
@@ -367,6 +373,8 @@ async function main() {
           ...(cmd === 'trade-config-init' ? { payer: signer } : { authority: signer }),
           feeCollector,
           feeBps,
+          computeUnitLimit,
+          computeUnitPriceMicroLamports,
           programId,
         }),
       { label: cmd }
@@ -434,6 +442,8 @@ async function main() {
           feeCollectorTokenAccount: destAta,
           mint,
           amount,
+          computeUnitLimit,
+          computeUnitPriceMicroLamports,
           programId,
         }),
       { label: 'fees-withdraw:build' }
@@ -506,6 +516,8 @@ async function main() {
           feeCollectorTokenAccount: destAta,
           mint,
           amount,
+          computeUnitLimit,
+          computeUnitPriceMicroLamports,
           programId,
         }),
       { label: 'trade-fees-withdraw:build' }

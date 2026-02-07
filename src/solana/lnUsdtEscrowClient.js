@@ -12,6 +12,8 @@ import {
   getAssociatedTokenAddress,
 } from '@solana/spl-token';
 
+import { buildComputeBudgetIxs } from './computeBudget.js';
+
 export const LN_USDT_ESCROW_PROGRAM_ID = new PublicKey('4RS6xpspM1V2K7FKSqeSH6VVaZbtzHzhJqacwrz8gJrF');
 
 const ESCROW_SEED = Buffer.from('escrow');
@@ -363,6 +365,8 @@ export async function initTradeConfigTx({
   payer,
   feeCollector,
   feeBps,
+  computeUnitLimit = null,
+  computeUnitPriceMicroLamports = null,
   programId = LN_USDT_ESCROW_PROGRAM_ID,
 }) {
   const { pda: tradeConfigPda } = deriveTradeConfigPda(feeCollector, programId);
@@ -377,7 +381,9 @@ export async function initTradeConfigTx({
     ],
     data,
   });
-  const tx = new Transaction().add(ix);
+  const tx = new Transaction();
+  for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+  tx.add(ix);
   tx.feePayer = payer.publicKey;
   const latest = await connection.getLatestBlockhash('confirmed');
   tx.recentBlockhash = latest.blockhash;
@@ -390,6 +396,8 @@ export async function setTradeConfigTx({
   authority,
   feeCollector,
   feeBps,
+  computeUnitLimit = null,
+  computeUnitPriceMicroLamports = null,
   programId = LN_USDT_ESCROW_PROGRAM_ID,
 }) {
   const { pda: tradeConfigPda } = deriveTradeConfigPda(feeCollector, programId);
@@ -402,7 +410,9 @@ export async function setTradeConfigTx({
     ],
     data,
   });
-  const tx = new Transaction().add(ix);
+  const tx = new Transaction();
+  for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+  tx.add(ix);
   tx.feePayer = authority.publicKey;
   const latest = await connection.getLatestBlockhash('confirmed');
   tx.recentBlockhash = latest.blockhash;
@@ -416,6 +426,8 @@ export async function withdrawTradeFeesTx({
   feeCollectorTokenAccount,
   mint,
   amount,
+  computeUnitLimit = null,
+  computeUnitPriceMicroLamports = null,
   programId = LN_USDT_ESCROW_PROGRAM_ID,
 }) {
   const { pda: tradeConfigPda } = deriveTradeConfigPda(feeCollector.publicKey, programId);
@@ -432,7 +444,9 @@ export async function withdrawTradeFeesTx({
     ],
     data,
   });
-  const tx = new Transaction().add(ix);
+  const tx = new Transaction();
+  for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+  tx.add(ix);
   tx.feePayer = feeCollector.publicKey;
   const latest = await connection.getLatestBlockhash('confirmed');
   tx.recentBlockhash = latest.blockhash;
@@ -453,6 +467,8 @@ export async function createEscrowTx({
   expectedPlatformFeeBps,
   expectedTradeFeeBps,
   tradeFeeCollector,
+  computeUnitLimit = null,
+  computeUnitPriceMicroLamports = null,
   programId = LN_USDT_ESCROW_PROGRAM_ID,
 }) {
   const { pda: escrowPda } = deriveEscrowPda(paymentHashHex, programId);
@@ -482,7 +498,8 @@ export async function createEscrowTx({
   });
 
   const tx = new Transaction();
-  // Note: The program CPI creates the escrow PDA and vault ATA; the transaction contains only the init instruction.
+  for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+  // Note: The program CPI creates the escrow PDA and vault ATA; the transaction contains only the init instruction (+ optional compute budget).
   tx.add(initIx);
 
   tx.feePayer = payer.publicKey;
@@ -500,6 +517,8 @@ export async function claimEscrowTx({
   paymentHashHex,
   preimageHex,
   tradeFeeCollector,
+  computeUnitLimit = null,
+  computeUnitPriceMicroLamports = null,
   programId = LN_USDT_ESCROW_PROGRAM_ID,
 }) {
   const { pda: escrowPda } = deriveEscrowPda(paymentHashHex, programId);
@@ -517,7 +536,9 @@ export async function claimEscrowTx({
     tradeFeeVaultAta,
     programId,
   });
-  const tx = new Transaction().add(claimIxFactory(vault));
+  const tx = new Transaction();
+  for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+  tx.add(claimIxFactory(vault));
   tx.feePayer = recipient.publicKey;
   const latest = await connection.getLatestBlockhash('confirmed');
   tx.recentBlockhash = latest.blockhash;
@@ -531,6 +552,8 @@ export async function refundEscrowTx({
   refundTokenAccount,
   mint,
   paymentHashHex,
+  computeUnitLimit = null,
+  computeUnitPriceMicroLamports = null,
   programId = LN_USDT_ESCROW_PROGRAM_ID,
 }) {
   const { pda: escrowPda } = deriveEscrowPda(paymentHashHex, programId);
@@ -541,7 +564,9 @@ export async function refundEscrowTx({
     refundTokenAccount,
     programId,
   });
-  const tx = new Transaction().add(refundIxFactory(vault));
+  const tx = new Transaction();
+  for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+  tx.add(refundIxFactory(vault));
   tx.feePayer = refund.publicKey;
   const latest = await connection.getLatestBlockhash('confirmed');
   tx.recentBlockhash = latest.blockhash;
@@ -554,6 +579,8 @@ export async function initConfigTx({
   payer,
   feeCollector,
   feeBps,
+  computeUnitLimit = null,
+  computeUnitPriceMicroLamports = null,
   programId = LN_USDT_ESCROW_PROGRAM_ID,
 }) {
   const { pda: configPda } = deriveConfigPda(programId);
@@ -568,7 +595,9 @@ export async function initConfigTx({
     ],
     data,
   });
-  const tx = new Transaction().add(ix);
+  const tx = new Transaction();
+  for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+  tx.add(ix);
   tx.feePayer = payer.publicKey;
   const latest = await connection.getLatestBlockhash('confirmed');
   tx.recentBlockhash = latest.blockhash;
@@ -581,6 +610,8 @@ export async function setConfigTx({
   authority,
   feeCollector,
   feeBps,
+  computeUnitLimit = null,
+  computeUnitPriceMicroLamports = null,
   programId = LN_USDT_ESCROW_PROGRAM_ID,
 }) {
   const { pda: configPda } = deriveConfigPda(programId);
@@ -593,7 +624,9 @@ export async function setConfigTx({
     ],
     data,
   });
-  const tx = new Transaction().add(ix);
+  const tx = new Transaction();
+  for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+  tx.add(ix);
   tx.feePayer = authority.publicKey;
   const latest = await connection.getLatestBlockhash('confirmed');
   tx.recentBlockhash = latest.blockhash;
@@ -607,6 +640,8 @@ export async function withdrawFeesTx({
   feeCollectorTokenAccount,
   mint,
   amount,
+  computeUnitLimit = null,
+  computeUnitPriceMicroLamports = null,
   programId = LN_USDT_ESCROW_PROGRAM_ID,
 }) {
   const { pda: configPda } = deriveConfigPda(programId);
@@ -623,7 +658,9 @@ export async function withdrawFeesTx({
     ],
     data,
   });
-  const tx = new Transaction().add(ix);
+  const tx = new Transaction();
+  for (const cbIx of buildComputeBudgetIxs({ computeUnitLimit, computeUnitPriceMicroLamports })) tx.add(cbIx);
+  tx.add(ix);
   tx.feePayer = feeCollector.publicKey;
   const latest = await connection.getLatestBlockhash('confirmed');
   tx.recentBlockhash = latest.blockhash;

@@ -184,6 +184,8 @@ async function main() {
   const solKeypairPath = flags.get('solana-keypair') ? String(flags.get('solana-keypair')).trim() : '';
   const solMintStr = flags.get('solana-mint') ? String(flags.get('solana-mint')).trim() : '';
   const solDecimals = parseIntFlag(flags.get('solana-decimals'), 'solana-decimals', 6);
+  const solComputeUnitLimit = parseIntFlag(flags.get('solana-cu-limit'), 'solana-cu-limit', null);
+  const solComputeUnitPriceMicroLamports = parseIntFlag(flags.get('solana-cu-price'), 'solana-cu-price', null);
 
   const lnImpl = (flags.get('ln-impl') && String(flags.get('ln-impl')).trim().toLowerCase()) || 'cln';
   if (lnImpl !== 'cln' && lnImpl !== 'lnd') die('Invalid --ln-impl (expected cln|lnd)');
@@ -272,7 +274,12 @@ async function main() {
     ? (() => {
         const payer = readSolanaKeypair(solKeypairPath);
         const pool = new SolanaRpcPool({ rpcUrls: solRpcUrl, commitment: 'confirmed' });
-        return { payer, pool };
+        return {
+          payer,
+          pool,
+          computeUnitLimit: solComputeUnitLimit,
+          computeUnitPriceMicroLamports: solComputeUnitPriceMicroLamports,
+        };
       })()
     : null;
 
@@ -651,6 +658,8 @@ async function main() {
           paymentHashHex,
           preimageHex,
           tradeFeeCollector: new PublicKey(String(tradeFeeCollectorStr)),
+          computeUnitLimit: sol.computeUnitLimit,
+          computeUnitPriceMicroLamports: sol.computeUnitPriceMicroLamports,
           ...(programId ? { programId } : {}),
         }),
       { label: 'taker:build-claim-tx' }

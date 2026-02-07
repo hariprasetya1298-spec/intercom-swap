@@ -187,6 +187,8 @@ async function main() {
   const solMintStr = flags.get('solana-mint') ? String(flags.get('solana-mint')).trim() : '';
   const solDecimals = parseIntFlag(flags.get('solana-decimals'), 'solana-decimals', 6);
   const solProgramIdStr = flags.get('solana-program-id') ? String(flags.get('solana-program-id')).trim() : '';
+  const solComputeUnitLimit = parseIntFlag(flags.get('solana-cu-limit'), 'solana-cu-limit', null);
+  const solComputeUnitPriceMicroLamports = parseIntFlag(flags.get('solana-cu-price'), 'solana-cu-price', null);
   const solTradeFeeCollectorStr = flags.get('solana-trade-fee-collector')
     ? String(flags.get('solana-trade-fee-collector')).trim()
     : '';
@@ -284,7 +286,15 @@ async function main() {
 	        const mint = new PublicKey(solMintStr);
 	        const programId = solProgramIdStr ? new PublicKey(solProgramIdStr) : LN_USDT_ESCROW_PROGRAM_ID;
 	        const tradeFeeCollector = solTradeFeeCollectorStr ? new PublicKey(solTradeFeeCollectorStr) : null;
-	        return { payer, pool, mint, programId, tradeFeeCollector };
+	        return {
+	          payer,
+	          pool,
+	          mint,
+	          programId,
+	          tradeFeeCollector,
+	          computeUnitLimit: solComputeUnitLimit,
+	          computeUnitPriceMicroLamports: solComputeUnitPriceMicroLamports,
+	        };
 	      })()
 	    : null;
 
@@ -513,6 +523,8 @@ async function main() {
 	          expectedPlatformFeeBps: Number(ctx.trade.terms.platform_fee_bps || 0),
 	          expectedTradeFeeBps: Number(ctx.trade.terms.trade_fee_bps || 0),
 	          tradeFeeCollector: new PublicKey(String(ctx.trade.terms.trade_fee_collector)),
+	          computeUnitLimit: sol.computeUnitLimit,
+	          computeUnitPriceMicroLamports: sol.computeUnitPriceMicroLamports,
 	          programId: sol.programId,
 	        }),
 	      { label: 'maker:build-escrow-tx' }

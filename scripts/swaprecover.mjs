@@ -32,6 +32,7 @@ Notes:
   - Receipts DB should live under onchain/ (gitignored).
   - claim requires ln_preimage_hex to be present in the receipt (or you must re-export it from your LN node first).
   - refund requires the Solana keypair that matches trade.sol_refund (the escrow depositor/refund authority).
+  - Optional fee tuning: add --solana-cu-limit <units> and/or --solana-cu-price <microLamports> (priority fee).
 `.trim();
 }
 
@@ -65,6 +66,13 @@ function normalizeHex32(value, label) {
   const hex = String(value || '').trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(hex)) die(`${label} must be 32-byte hex`);
   return hex;
+}
+
+function parsePosIntOrNull(value, label) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number.parseInt(String(value), 10);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) die(`Invalid --${label}`);
+  return n;
 }
 
 async function ensureAta({ connection, payer, mint, owner }) {
@@ -146,6 +154,8 @@ async function main() {
       const rpcUrl = requireFlag(flags, 'solana-rpc-url');
       const keyPath = requireFlag(flags, 'solana-keypair');
       const commitment = flags.get('commitment') ? String(flags.get('commitment')).trim() : 'confirmed';
+      const computeUnitLimit = parsePosIntOrNull(flags.get('solana-cu-limit'), 'solana-cu-limit');
+      const computeUnitPriceMicroLamports = parsePosIntOrNull(flags.get('solana-cu-price'), 'solana-cu-price');
 
       const recipient = readSolanaKeypair(keyPath);
       const pool = new SolanaRpcPool({ rpcUrls: rpcUrl, commitment });
@@ -179,6 +189,8 @@ async function main() {
             paymentHashHex: hash,
             preimageHex: preimage,
             tradeFeeCollector,
+            computeUnitLimit,
+            computeUnitPriceMicroLamports,
             programId,
           }),
         { label: 'claim:build-tx' }
@@ -210,6 +222,8 @@ async function main() {
       const rpcUrl = requireFlag(flags, 'solana-rpc-url');
       const keyPath = requireFlag(flags, 'solana-keypair');
       const commitment = flags.get('commitment') ? String(flags.get('commitment')).trim() : 'confirmed';
+      const computeUnitLimit = parsePosIntOrNull(flags.get('solana-cu-limit'), 'solana-cu-limit');
+      const computeUnitPriceMicroLamports = parsePosIntOrNull(flags.get('solana-cu-price'), 'solana-cu-price');
 
       const refund = readSolanaKeypair(keyPath);
       if (!refund.publicKey.equals(refundAddr)) {
@@ -243,6 +257,8 @@ async function main() {
             refundTokenAccount: refundToken,
             mint,
             paymentHashHex: hash,
+            computeUnitLimit,
+            computeUnitPriceMicroLamports,
             programId,
           }),
         { label: 'refund:build-tx' }
