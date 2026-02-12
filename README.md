@@ -189,11 +189,13 @@ per-trade invite-only swap:<trade_id>
     | SOL_ESCROW_CREATED (escrow PDA + vault ATA)
     v
 Settlement (BTC over Lightning <> USDT on Solana)
-  1) Maker escrows USDT (Solana) and creates LN invoice keyed by payment_hash
-  2) Taker verifies escrow on-chain (hard rule: no escrow, no pay)
-  3) Taker pays LN invoice -> learns preimage
-  4) Taker claims USDT on Solana using preimage
-  5) Refund path after sol_refund_after_unix if LN payment never happens
+  1) Maker creates + posts LN invoice (receiver inbound liquidity check must pass)
+  2) Taker runs LN route precheck and posts `ln_route_precheck_ok` (swap.status)
+  3) Maker escrows USDT (Solana) only after taker precheck is OK
+  4) Taker verifies escrow on-chain (hard rule: no escrow, no pay)
+  5) Taker pays LN invoice -> learns preimage
+  6) Taker claims USDT on Solana using preimage
+  7) Refund path after sol_refund_after_unix if LN payment never happens
 ```
 
 ## External APIs / RPCs (Defaults)
@@ -738,9 +740,9 @@ Edit `onchain/prompt/setup.json`:
 - `receipts.db` (optional, for `intercomswap_receipts_*` tools)
 - `ln.*`, `solana.*` (optional, depending on which tools you want enabled)
 - trade automation bootstrap (optional, defaults shown):
-  - `server.tradeauto_autostart` (default `false`): backend trade worker is off by default after promptd restart.
+  - `server.tradeauto_autostart` (default `true`): backend trade worker starts automatically on promptd startup.
   - `server.tradeauto_channels` (default `["0000intercomswapbtcusdt","0000intercom"]`).
-  - `server.tradeauto_trace_enabled` (default `false`).
+  - `server.tradeauto_trace_enabled` (default `false`): trace is off by default.
   - `server.tradeauto_autostart_retry_ms` (default `5000`), `server.tradeauto_autostart_max_attempts` (default `24`).
 
 Start the service:
