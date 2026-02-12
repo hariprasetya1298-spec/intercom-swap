@@ -582,6 +582,7 @@ function App() {
     }
   });
   const [lnChannelAmountSats, setLnChannelAmountSats] = useState<number>(1_000_000);
+  const [lnChannelPushSats, setLnChannelPushSats] = useState<number>(0);
   const [lnChannelSatPerVbyte, setLnChannelSatPerVbyte] = useState<number>(2);
   const [lnChannelCloseSatPerVbyte, setLnChannelCloseSatPerVbyte] = useState<number>(2);
   const [lnSpliceChannelId, setLnSpliceChannelId] = useState<string>('');
@@ -4431,7 +4432,7 @@ function App() {
   const lnImpl = String((preflight as any)?.env?.ln?.impl || (preflight as any)?.ln_info?.implementation || envInfo?.ln?.impl || '').trim().toLowerCase();
 	  const lnBackend = String(envInfo?.ln?.backend || '');
   const lnRebalanceSupported = lnImpl === 'lnd';
-  const lnRebalanceMinChannelsOk = lnChannelCount >= 2;
+  const lnRebalanceMinChannelsOk = lnActiveChannelCount >= 2;
   const lnSpliceBackendSupported = lnImpl === 'cln';
   const lnUnlockHelperSupported = lnImpl === 'lnd' && lnBackend === 'docker';
 	  const lnNetwork = String(envInfo?.ln?.network || '');
@@ -6797,6 +6798,19 @@ function App() {
                   </div>
                   <div className="field">
                     <div className="field-hd">
+                      <span className="mono">push inbound (optional)</span>
+                    </div>
+                    <BtcSatsField
+                      name="ln_channel_push"
+                      sats={lnChannelPushSats}
+                      onSats={(n) => setLnChannelPushSats(Math.max(0, Number(n || 0)))}
+                    />
+                    <div className="muted small">
+                      Pushes initial balance to peer on open so your side gets immediate inbound capacity.
+                    </div>
+                  </div>
+                  <div className="field">
+                    <div className="field-hd">
                       <span className="mono">open fee rate</span>
                       <span className="muted small">sat/vB</span>
                     </div>
@@ -6848,7 +6862,20 @@ function App() {
                       }
                       const node_id = String(m[1]).toLowerCase();
                       const amount_sats = Number(lnChannelAmountSats || 0);
+                      const push_sats = Number(lnChannelPushSats || 0);
                       const sat_per_vbyte = Number(lnChannelSatPerVbyte || 0);
+                      if (!Number.isInteger(push_sats) || push_sats < 0) {
+                        pushToast('error', 'Push inbound must be an integer >= 0 sats');
+                        return;
+                      }
+                      if (push_sats > 0 && lnImpl !== 'lnd') {
+                        pushToast('error', 'Push inbound is currently supported for LND only.');
+                        return;
+                      }
+                      if (push_sats >= amount_sats) {
+                        pushToast('error', 'Push inbound must be less than channel amount');
+                        return;
+                      }
                       if (typeof lnWalletSats === 'number' && Number.isFinite(lnWalletSats) && lnWalletSats > 0) {
                         const feeBuffer = Math.max(
                           LN_OPEN_TX_FEE_BUFFER_MIN_SATS,
@@ -6869,7 +6896,9 @@ function App() {
                       const ok =
                         autoApprove ||
                         window.confirm(
-                          `Connect and open channel?\n\npeer: ${peer}\namount_sats: ${amount_sats}\nfee: ${sat_per_vbyte > 0 ? `${sat_per_vbyte} sat/vB` : '(default)'}`
+                          `Connect and open channel?\n\npeer: ${peer}\namount_sats: ${amount_sats}\npush_sats: ${push_sats}\nfee: ${
+                            sat_per_vbyte > 0 ? `${sat_per_vbyte} sat/vB` : '(default)'
+                          }`
                         );
                       if (!ok) return;
                       try {
@@ -6888,6 +6917,7 @@ function App() {
                           {
                             node_id,
                             amount_sats,
+                            push_sats: push_sats > 0 ? push_sats : undefined,
                             sat_per_vbyte: sat_per_vbyte > 0 ? sat_per_vbyte : undefined,
                           },
                           { auto_approve: true }
@@ -6899,7 +6929,11 @@ function App() {
                           : hint.channelPoint
                             ? ` (channel ${hint.channelPoint.slice(0, 22)}…)`
                             : '';
-                        pushToast('success', `Channel open submitted${detail}`, { ttlMs: 8_000 });
+                        pushToast(
+                          'success',
+                          `Channel open submitted${detail}${push_sats > 0 ? ` with push ${push_sats} sats` : ''}`,
+                          { ttlMs: 8_000 }
+                        );
                         void refreshPreflight();
                       } catch (e: any) {
                         pushToast('error', e?.message || String(e));
@@ -6932,7 +6966,7 @@ function App() {
 	                      {!lnRebalanceMinChannelsOk ? (
 	                        <div className="alert warn" style={{ marginTop: 8 }}>
 	                          <b>Likely no route.</b> Self-pay rebalance usually needs at least <span className="mono">2 active channels</span>{' '}
-	                          to form a circular route. Current active/known channels: <span className="mono">{lnChannelCount}</span>.
+	                          to form a circular route. Current active/known channels: <span className="mono">{lnActiveChannelCount}</span>/<span className="mono">{lnChannelCount}</span>.
 	                        </div>
 	                      ) : null}
                       {lnWalletLocked ? (
@@ -6999,7 +7033,6 @@ function App() {
 	                            runBusy ||
                             lnWalletLocked ||
 	                            !lnRebalanceSupported ||
-	                            !lnRebalanceMinChannelsOk ||
 	                            !Number.isInteger(lnRebalanceAmountSats) ||
 	                            Number(lnRebalanceAmountSats) <= 0
 	                          }
@@ -7009,7 +7042,10 @@ function App() {
                               return;
                             }
                             if (!lnRebalanceMinChannelsOk) {
-                              pushToast('error', 'Rebalance requires at least 2 active channels to form a return route.');
+                              pushToast(
+                                'error',
+                                'Rebalance requires at least 2 active channels to form a return route. Open another channel (or open with push inbound) first.'
+                              );
                               return;
                             }
 	                            const amount_sats = Number(lnRebalanceAmountSats || 0);
