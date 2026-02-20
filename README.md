@@ -1,27 +1,24 @@
 trac addres :trac1pdhal2dzaerrcv8xtetn5vgmglrvhnlt3x44dzsx5rkd3xuvj5zq8kpq3x
 
 
+
 # 🚀 Intercom Network Balance Monitor
 
-Bot Python sederhana untuk memantau saldo wallet secara otomatis pada jaringan **Intercom Network** (atau jaringan berbasis EVM lainnya seperti Polygon).
+A simple Python bot to automatically monitor wallet balances on the **Intercom Network** (or other EVM-based networks like Polygon).
 
-## ✨ Fitur
-* **Monitoring Real-time**: Mengecek saldo setiap 10 detik.
-* **Auto-Logging**: Menampilkan waktu pengecekan dan jumlah saldo langsung di terminal.
-* **Error Handling**: Memberikan peringatan jika koneksi internet terputus atau server RPC sedang sibuk.
+## ✨ Features
+* **Real-time Monitoring**: Checks balances every 10 seconds.
+* **Auto-Logging**: Displays the check time and balance amount directly in the terminal.
+* **Error Handling**: Provides alerts if the internet connection is lost or the RPC server is busy.
 
-## 🛠️ Prasyarat
+ ## 🛠️ Prerequisites
 * **Python 3.x**
-* **Library Requests**: Install dengan perintah `pip install requests`
+* **Library Requests**: Install with the command `pip install requests`
 
-## 🚀 Cara Penggunaan
-1. Clone repository ini:
-   ```bash
-   git clone [https://github.com/hariprasetya1298-spec/intercom-swap.git](https://github.com/hariprasetya1298-spec/intercom-swap.git)
-   cd intercom-swap
-
+## 🚀 How to Use
+1. Clone this repository:
+```bash
+git clone [https://github.com/hariprasetya1298-spec/intercom-swap.git](https://github.com/hariprasetya1298-spec/intercom-swap.git)
+cd intercom-swap
 
 python bot.py
-
-
-
